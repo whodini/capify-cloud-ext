@@ -1,0 +1,5 @@
+#TODOs
+	*	Load group name specific configuration
+	*	Load dependent gems like fog, colored from the dependencies
+
+
