@@ -1,50 +1,25 @@
 require 'rubygems'
 require 'fog'
 require 'colored'
-#require File.expand_path(File.dirname(__FILE__) + '/capify-cloud/server')
 
 class Ec2Helper
 	
-       def initialize(cloud_config = "config/cloud.yml")
+       def initialize(region, cloud_config = "config/cloud.yml")
 		@cloud_config = YAML.load_file cloud_config
 		@instances =[]
-		@cloud_providers = @cloud_config[:cloud_providers]
-    		@cloud_providers.each do |cloud_provider|
-		      config = @cloud_config[cloud_provider.to_sym]
-		      config[:provider] = cloud_provider
-		        regions = determine_regions(cloud_provider)
-			config.delete(:regions)
-			      if regions
-			          regions.each do |region|
-			            config.delete(:region)
-		        	    config[:region] = region
-			            populate_instances(config)
-			          end
-		        else populate_instances(config)
-			      end
-		 end
+		populate_instances(region, @cloud_config)
+	end
 
-        end
-	def determine_regions(cloud_provider = 'AWS')
-	    regions = @cloud_config[cloud_provider.to_sym][:regions]
-	  end
-
-
-	def populate_instances(config)
-    		@fog = Fog::Compute.new(config)
+	def populate_instances(region, config)
+		#Choose the defualt prover and region
+		raise "aws_access_key_id or aws_secret_access_key keys are not present in the config file" if config[:aws_access_key_id].nil? or config[:aws_secret_access_key].nil?
+		temp_config = {:provider => 'AWS'}
+		config[:region] = region
+    		@fog = Fog::Compute.new(temp_config.merge!(config))
 		@fog.servers.each {|server| @instances << server }
 	end
-
-      	def get_zoo_srvs_private_dns(group)
-		zoosrvs = Array.new
-		instances = get_instances_byrole(group, 'zoo-srv')
-		instances.each {|instance|
-			zoosrvs << instance.private_dns_name
-		}
-		return zoosrvs
-	end
 		
-	def get_instances_byrole(group, role)
+	def get_instances_role(group, role)
 		ret_instances = Array.new
 		@instances.each {|instance|
 			if not instance.tags['role'].nil? and instance.ready?
@@ -56,22 +31,6 @@ class Ec2Helper
 		return ret_instances
 	end
 	
-	def get_solr_private_dns(group)
-		instances = get_instances_byrole(group, 'solr')
-		return instances[0].private_dns_name if instances.count > 0
-	end
-		
-	
-	def get_facade_srv_public_dns(group)
-		instance = get_instances_byrole(group, 'api-srv')
-		return instance[0].dns_name if instance.count > 0
-	end
-
-	def get_db_srv_private_dns(group)
-		instance = get_instances_byrole(group, 'db-srv')
-		return instance[0].private_dns_name if instance.count > 0
-	end
-
 	def printInstanceDetails()
 		 @instances.each_with_index do |instance, i|
 		      puts sprintf "%02d:  %-20s  %-20s %-20s  %-20s  %-25s  %-20s  (%s)  (%s) (%s)",
@@ -82,46 +41,13 @@ class Ec2Helper
 
 	end	
 
-	def get_server_details_by_pri_pub_dns(dns)
-		details={}
+	def get_instance_by_pri_pub_dns(dns)
 		@instances.each { |instance|
 			if instance.private_dns_name == dns or instance.dns_name == dns
-				details['name']=instance.tags['name_s']
-				details['orgid']=instance.tags['orgid']
-				details['group']=instance.tags['group']
-				details['private_dns_name'] = instance.private_dns_name
-				details['role']	= instance.tags['role']
-				details['public_dns_name'] = instance.dns_name
-				details['id'] = instance.id
-				details['zone'] = instance.availability_zone
-				return details
+				return instance
 			end
 		}
-		return details
 	end
-
-	def get_server_details_map(isrunning)
-		servers={}
-		@instances.each { |instance|
-				if not isrunning or (isrunning and instance.ready?)	
-				details={}
-				details['name']=instance.tags['name_s']
-				details['orgid']=instance.tags['orgid']
-				details['group']=instance.tags['group']
-				details['private_dns_name'] = instance.private_dns_name
-				details['role']	= instance.tags['role']
-				details['public_dns_name'] = instance.dns_name
-				details['id'] = instance.id
-				details['zone'] = instance.availability_zone
-				details['device_mappings'] = Array.new
-				instance.block_device_mapping.each { |mapping|
-					details['device_mappings'] << mapping['deviceName']
-				} 
-				servers[instance.private_dns_name] = details
-				end
-		}
-		return servers
-	end	
 
 	def get_all_stacks
 		stacks = {}
@@ -137,14 +63,6 @@ class Ec2Helper
 	end
 
 		
-	def get_instance_on_dns(dns)
-		@instances.each { |instance|
-			if instance.private_dns_name == dns or instance.dns_name == dns 
-				return instance
-			end	
-		}
-	end
-
 	def get_groups
 		groups = Set.new
 		@instances.each { |instance|
@@ -170,6 +88,34 @@ class Ec2Helper
 		return nil
 	end
 
+	def add_tags(resource_id, tags = {})
+		tags.each { |key, value|
+			@fog.tags.create(:resource_id => resource_id, :key => key, :value => value)
+		}
+	end
+
+	def get_all_instances
+		return @instances
+	end
+
+	def lb_unregister_instances(lb_name, instances)
+		lb = get_lb(lb_name)
+		lb.deregister_instances(instances.map{|i| i.id })
+	end
+
+	def lb_register_instances(lb_name, instances)
+		lb = get_lb(lb_name)
+		lb.register_instances(instances.map{|i| i.id })
+	end
+
+	private
+	def get_lb(lb_name)
+		@lbs ||= Fog::AWS::ELB.new(@cloud_config).load_balancers
+		lb = @lbs.get(lb_name)
+		raise "lb #{lb_name} not found in the region #{@cloud_config[:region]}" if lb.nil?
+		return lb
+	end
+	#Not used.
 	def get_zone(roles, sec_group)
 		zones = Hash["us-west-1b" =>0,"us-west-1c" =>0]
 		@instances.each { |instance|
@@ -186,16 +132,27 @@ class Ec2Helper
 		return min_zone
 	end
 	
-
-	def add_tags(resource_id, tags = {})
-		tags.each { |key, value|
-			puts "#{resource_id}, #{key}, #{value}"
-			@fog.tags.create(:resource_id => resource_id, :key => key, :value => value)
+	#Not used anywhere...I just kept this code to check the instance properties to access block_device_mapping
+	def get_server_details_map(isrunning)
+		servers={}
+		@instances.each { |instance|
+				if not isrunning or (isrunning and instance.ready?)	
+				details={}
+				details['name']=instance.tags['name_s']
+				details['orgid']=instance.tags['orgid']
+				details['group']=instance.tags['group']
+				details['private_dns_name'] = instance.private_dns_name
+				details['role']	= instance.tags['role']
+				details['public_dns_name'] = instance.dns_name
+				details['id'] = instance.id
+				details['zone'] = instance.availability_zone
+				details['device_mappings'] = Array.new
+				instance.block_device_mapping.each { |mapping|
+					details['device_mappings'] << mapping['deviceName']
+				} 
+				servers[instance.private_dns_name] = details
+				end
 		}
-	end
-
-	def get_all_instances
-		return @instances
-	end
+		return servers
+	end	
 end
-

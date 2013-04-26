@@ -7,8 +7,8 @@ end
 require 'capawsext/whoec2helper'
 
 Capistrano::Configuration.instance(:must_exist).load do
-	def add_groups
-		ec2_helper = Ec2Helper.new
+	def add_groups(region)
+		ec2_helper = Ec2Helper.new(region)
 		groups = ec2_helper.get_groups
 		groups.each { |group|
 			task group.to_sym, :desc => "Run the task in all instances of the #{group}" do
