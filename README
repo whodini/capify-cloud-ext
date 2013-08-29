@@ -1,7 +1,0 @@
-# Capistrano AWS extension that provides better support for mulitstage deployments. 
-##TODOs
- * Add the documentation around how to use it, why to use it etc.
- * Add the api to start instance on AWS with all the relevant attributes like group, roles etc.
- * Review the api to work on running and non-running instances; make it more consistent
- * API cleanup and strengthing
-
