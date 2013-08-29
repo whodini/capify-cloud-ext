@@ -39,8 +39,5 @@ Capistrano::Configuration.instance(:must_exist).load do
 		set :group, group
 		#Load the file is exists
 		load "config/#{group}" if File.exists?(File.expand_path(Dir.pwd + "/config/#{group}.rb"))
-		#TODO: call the group name configuration file to load group configuration.
-		#Like the capmultiext
-
 	end
 end

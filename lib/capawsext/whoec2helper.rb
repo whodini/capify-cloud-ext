@@ -31,13 +31,17 @@ class Ec2Helper
 		return ret_instances
 	end
 	
-	def printInstanceDetails()
+	def printInstanceDetails(only_running=true)
 		 @instances.each_with_index do |instance, i|
-		      puts sprintf "%02d:  %-20s  %-20s %-20s  %-20s  %-25s  %-20s  (%s)  (%s) (%s)",
-        		i, (instance.tags["Name"] || "").green,instance.private_dns_name ,instance.id.red, instance.flavor_id.cyan,
-		        instance.dns_name.blue, instance.availability_zone.magenta, (instance.tags["role"] || "").yellow,
-		        (instance.tags["group"] || "").yellow, (instance.tags["app"] || "").green if instance.ready?
-	      end
+			if only_running and (not instance.ready?)
+				next
+			end
+
+			puts sprintf "%02d:  %-20s  %-20s %-20s  %-20s  %-25s  %-20s  (%s)  (%s) (%s)",
+			i, (instance.tags["Name"] || "").green,instance.private_dns_name ,instance.id.red, instance.flavor_id.cyan,
+			instance.dns_name.blue, instance.availability_zone.magenta, (instance.tags["role"] || "").yellow,
+			(instance.tags["group"] || "").yellow, (instance.tags["app"] || "").green 
+		 end
 
 	end	
 
@@ -68,6 +72,15 @@ class Ec2Helper
 		@instances.each { |instance|
 			group = instance.tags['group']
 			groups.add(group) if not group.nil? 	
+		}	
+		return groups
+	end
+
+	def get_groups_byapp(app)
+		groups = Set.new
+		@instances.each { |instance|
+			group = instance.tags['group']
+			groups << group if not group.nil? and instance.tags["app"] == app	
 		}	
 		return groups
 	end
