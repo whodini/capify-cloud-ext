@@ -3,20 +3,19 @@ require 'fog'
 require 'colored'
 
 class Ec2Helper
+  attr_reader :client
 
-  def initialize(region, cloud_config = "config/cloud.yml")
-    @cloud_config = YAML.load_file cloud_config
-    @instances =[]
-    populate_instances(region, @cloud_config)
-  end
-
-  def populate_instances(region, config)
-    #Choose the defualt prover and region
-    raise "aws_access_key_id or aws_secret_access_key keys are not present in the config file" if config[:aws_access_key_id].nil? or config[:aws_secret_access_key].nil?
-    temp_config = {:provider => 'AWS'}
-    config[:region] = region
-    @fog = Fog::Compute.new(temp_config.merge!(config))
-    @fog.servers.each {|server| @instances << server }
+  def initialize(options={})
+    options[:provider] = 'AWS'
+    options[:region] = options.delete(:aws_region)
+    @client = Fog::Compute.new options
+    @groups = Hash.new
+    @client.servers.each do |server|
+      group = server.tags['group']
+      next if group.nil?
+      @groups[group] = Array.new if !@groups.key? group
+      @groups[group] << server
+    end
   end
 
   #
@@ -24,7 +23,13 @@ class Ec2Helper
   #
   # @return [Array] List of all the instances
   def get_instances
-  	@instances
+    all_instances = Array.new()
+    @groups.values.each do |instances|
+      instances.each do |instance|
+        all_instances << instance
+      end
+    end
+    all_instances
   end
 
   #
@@ -34,15 +39,11 @@ class Ec2Helper
   #
   # @return [Array] List of all the instances with matching group and role.
   def get_instances_by_role(group, role)
-    ret_instances = Array.new
-    @instances.each {|instance|
+    get_instances(group).select do |instance|
       if not instance.tags['role'].nil? and instance.ready?
-        unless instance.tags['role'].match(role).nil? or instance.tags['group'] != group
-          ret_instances << instance
-        end
+        instance.tags.fetch('role', '').split(',').include? role
       end
-    }
-    return ret_instances
+    end
   end
 
   #
@@ -50,17 +51,17 @@ class Ec2Helper
   # @param  only_running=true [Boolean] setting to control all vs running instances details
   #
   def print_instances_details(only_running=true)
-    @instances.each_with_index do |instance, i|
-      if only_running and (not instance.ready?)
-        next
+    @groups.values.each_with_index do |instances, i|
+      instances.each do |instance|
+        if only_running and (not instance.ready?)
+          next
+        end
+        puts sprintf "%02d:  %-20s  %-20s %-20s  %-20s  %-25s  %-20s  (%s)  (%s) (%s)",
+          i, (instance.tags["Name"] || "").green,instance.private_dns_name ,instance.id.red, instance.flavor_id.cyan,
+          instance.dns_name.blue, instance.availability_zone.magenta, (instance.tags["role"] || "").yellow,
+          (instance.tags["group"] || "").yellow, (instance.tags["app"] || "").green
       end
-
-      puts sprintf "%02d:  %-20s  %-20s %-20s  %-20s  %-25s  %-20s  (%s)  (%s) (%s)",
-        i, (instance.tags["Name"] || "").green,instance.private_dns_name ,instance.id.red, instance.flavor_id.cyan,
-        instance.dns_name.blue, instance.availability_zone.magenta, (instance.tags["role"] || "").yellow,
-        (instance.tags["group"] || "").yellow, (instance.tags["app"] || "").green
     end
-
   end
 
   #
@@ -69,43 +70,14 @@ class Ec2Helper
   #
   # @return [Fog::AWS::EC2::Instance] Instance matching the dns name
   def get_instance_by_dns_name(dns_name)
-    @instances.each { |instance|
-      if instance.dns_name == dns_name
-        return instance
+    @groups.each_value { |instances|
+      instances.each do |instance|
+        if instance.dns_name == dns_name
+          return instance
+        end
       end
     }
     raise "unknown dns name: #{dns_name}"
-  end
-
-  def get_all_groups
-    stacks = {}
-    @instances.each {|instance|
-      instances = stacks[instance.tags['group']]
-      if instances.nil?
-        instances = Array.new
-        stacks[instance.tags['group']] = instances
-      end
-      instances << instance
-    }
-    return stacks
-  end
-
-  def get_groups
-    groups = Set.new
-    @instances.each { |instance|
-      group = instance.tags['group']
-      groups.add(group) if not group.nil?
-    }
-    return groups
-  end
-
-  def get_groups_byapp(app)
-    groups = Set.new
-    @instances.each { |instance|
-      group = instance.tags['group']
-      groups << group if not group.nil? and instance.tags["app"] == app
-    }
-    return groups
   end
 
   #
@@ -114,11 +86,8 @@ class Ec2Helper
   #
   # @return [Array] List of all the instances of the group.
   def get_instances(group)
-    ret_instances = Array.new
-    @instances.each { |instance|
-      ret_instances << instance if instance.tags['group'] == group
-    }
-    return ret_instances
+    raise "unknown group: #{group}" if !@groups.key? group
+    @groups[group].dup
   end
 
   #
@@ -170,6 +139,19 @@ class Ec2Helper
     lb.register_instances(instances.map{|i| i.id })
   end
 
+  def get_groups
+    @groups.keys
+  end
+
+  def get_groups_byapp(app)
+    groups = Set.new
+    get_all_instances().each { |instance|
+      group = instance.tags['group']
+      groups << group if not group.nil? and instance.tags["app"] == app
+    }
+    return groups
+  end
+
   private
   def get_lb(lb_name)
     @lbs ||= Fog::AWS::ELB.new(@cloud_config).load_balancers
@@ -181,7 +163,7 @@ class Ec2Helper
   #Not used anywhere...I just kept this code to check the instance properties to access block_device_mapping
   def get_server_details_map(isrunning)
     servers={}
-    @instances.each { |instance|
+    get_instances().each { |instance|
       if not isrunning or (isrunning and instance.ready?)
         details={}
         details['name']=instance.tags['name_s']
