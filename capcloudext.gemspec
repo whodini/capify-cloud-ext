@@ -1,14 +1,14 @@
 # -*- encoding: utf-8 -*-
 $:.push File.expand_path("../lib", __FILE__)
-require "capawsext/version"
+require "capcloudext/version"
 
 Gem::Specification.new do |s|
-  s.name        = "capawsext"
-  s.version     = CapAwsExt::VERSION
-  s.authors     = ["Sumit vij"]
-  s.email       = ["sumit@whodini.com"]
-  s.homepage    = "http://github.com/thedebugger/capawsext"
-  s.summary     = %q{Import the server ips, roles, groups from AWS server tags}
+  s.name        = "capcloudext"
+  s.version     = CapCloudExt::VERSION
+  s.authors     = ["Sumit Vij", "Nitin Arora", "Geert Jansen"]
+  s.email       = ["sumit@whodini.com", "nitin@whodini.com"]
+  s.homepage    = "http://github.com/whodini/capify-cloud-ext"
+  s.summary     = %q{Import the server ips, roles, groups from AWS, Ravello cloud providers server tags}
 
 
   s.files         = `git ls-files`.split("\n")
